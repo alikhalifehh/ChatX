@@ -9,9 +9,9 @@ from gui import ChatGUI  # GUI
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 5000
 
-USERNAME = "user1"
-TCP_PORT = "6000"
-UDP_PORT = "6001"
+USERNAME = "user2"
+TCP_PORT = "7000"
+UDP_PORT = "7001"
 
 
 def connect_to_server():
@@ -92,14 +92,12 @@ class UDPListener(threading.Thread):
         while True:
             data, addr = sock.recvfrom(65535)
 
-            # START (filename)
             if data.startswith(b"FILENAME:"):
                 filename = data.split(b":", 1)[1].decode()
                 chunks = {}
                 self.gui.show_message(f"[UDP] Receiving '{filename}'...")
                 continue
 
-            # END (EOF)
             if b"EOF" in data:
 
                 if filename is None:
@@ -124,7 +122,6 @@ class UDPListener(threading.Thread):
                 chunks = {}
                 continue
 
-            # NORMAL CHUNK
             if filename is not None:
                 seq = int.from_bytes(data[:4], "big")
                 chunk_data = data[4:]
@@ -207,8 +204,8 @@ if __name__ == "__main__":
     peers = request_peer_list()
 
     gui = ChatGUI(
-        lambda msg: send_message_to_user("user2", msg, peers, gui),      # FIXED
-        lambda filepath: send_file_to_user("user2", filepath, peers, gui)  # FIXED
+        lambda msg: send_message_to_user("user1", msg, peers, gui),      # FIXED
+        lambda filepath: send_file_to_user("user1", filepath, peers, gui)  # FIXED
     )
 
     tcp_thread = TCPListener(TCP_PORT, gui)
@@ -219,7 +216,7 @@ if __name__ == "__main__":
     udp_thread.daemon = True
     udp_thread.start()
 
-    gui.show_message("Welcome! You are user1.")
+    gui.show_message("Welcome! You are user2.")
     gui.show_message("Send message or click 'Send File'.")
 
     gui.run()
