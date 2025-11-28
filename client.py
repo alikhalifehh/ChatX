@@ -1,17 +1,11 @@
+import sys
 import socket
-import threading
-import os
-import time
-
 import network
-from gui import ChatGUI  # GUI
+import threading_utils
+from gui import ChatGUI
 
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 5000
-
-USERNAME = "user1"
-TCP_PORT = "6000"
-UDP_PORT = "6001"
 
 
 def connect_to_server():
@@ -20,9 +14,9 @@ def connect_to_server():
     return s
 
 
-def register():
+def register(username, tcp_port, udp_port):
     s = connect_to_server()
-    msg = f"REGISTER|{USERNAME}|{TCP_PORT}|{UDP_PORT}"
+    msg = f"REGISTER|{username}|{tcp_port}|{udp_port}"
     s.send(msg.encode())
     reply = s.recv(1024).decode()
     print("[SERVER REPLY]", reply)
@@ -33,193 +27,86 @@ def request_peer_list():
     s = connect_to_server()
     s.send("REQUEST_LIST".encode())
     data = s.recv(4096).decode()
-
-    peers = data.split("|")
-
-    print("\n[FORMATTED PEER LIST]")
-    for p in peers:
-        if p.strip() == "":
-            continue
-        user, ip, tcp, udp = p.split(",")
-        print(f"{user} -> IP: {ip}, TCP: {tcp}, UDP: {udp}")
-
     s.close()
+
+    peers = []
+    for p in data.split("|"):
+        if p.strip():
+            peers.append(p)
     return peers
 
 
-# =============================
-#     TCP LISTENER
-# =============================
-class TCPListener(threading.Thread):
-    def __init__(self, tcp_port, gui):
-        super().__init__()
-        self.tcp_port = tcp_port
-        self.gui = gui
-        self.running = True
-
-    def run(self):
-        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        listener.bind(("0.0.0.0", int(self.tcp_port)))
-        listener.listen()
-        print(f"[TCP LISTENER] Listening on {self.tcp_port}")
-
-        while self.running:
-            conn, addr = listener.accept()
-            data = conn.recv(4096).decode()
-            self.gui.show_message(f"From {addr}: {data}")
-            conn.close()
-
-
-# =============================
-#      UDP LISTENER
-# =============================
-class UDPListener(threading.Thread):
-    def __init__(self, udp_port, gui):
-        super().__init__()
-        self.udp_port = udp_port
-        self.gui = gui
-        self.running = True
-
-    def run(self):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.bind(("0.0.0.0", int(self.udp_port)))
-
-        print(f"[UDP LISTENER] Listening on {self.udp_port}")
-
-        filename = None
-        chunks = {}
-
-        while True:
-            data, addr = sock.recvfrom(65535)
-
-            # START (filename)
-            if data.startswith(b"FILENAME:"):
-                filename = data.split(b":", 1)[1].decode()
-                chunks = {}
-                self.gui.show_message(f"[UDP] Receiving '{filename}'...")
-                continue
-
-            # END (EOF)
-            if b"EOF" in data:
-
-                if filename is None:
-                    continue  # FIXED
-
-                clean = data.replace(b"EOF", b"")
-
-                if clean:
-                    seq = max(chunks.keys()) + 1 if chunks else 0
-                    chunks[seq] = clean
-
-                ordered = b"".join(chunks[i] for i in sorted(chunks.keys()))
-
-                save_name = os.path.abspath("received_" + filename)
-                with open(save_name, "wb") as f:
-                    f.write(ordered)
-
-                self.gui.show_message(f"[UDP] File '{save_name}' saved.")
-                self.gui.add_clickable_file(save_name)
-
-                filename = None
-                chunks = {}
-                continue
-
-            # NORMAL CHUNK
-            if filename is not None:
-                seq = int.from_bytes(data[:4], "big")
-                chunk_data = data[4:]
-                chunks[seq] = chunk_data
-
-
-# ====================================
-#       SEND MESSAGE
-# ====================================
-def send_message_to_user(target_user, message, peers, gui):
-
-    new_peers = request_peer_list()
-    peers.clear()
-    peers.extend(new_peers)
-
+def get_peer_usernames(peers, my_username):
+    names = []
     for p in peers:
-        if p.strip() == "":
-            continue
-
         user, ip, tcp, udp = p.split(",")
-        if user == target_user:
-            network.send_tcp_message(ip, tcp, message)
-            gui.show_message(f"You -> {target_user}: {message}")
-            return True
-
-    gui.show_message("[ERROR] User not found.")
-    return False
+        if user != my_username:
+            names.append(user)
+    return names
 
 
-# ====================================
-#         SEND FILE (UDP)
-# ====================================
+def find_peer_info(peers, username):
+    for p in peers:
+        user, ip, tcp, udp = p.split(",")
+        if user == username:
+            return ip, tcp, udp
+    return None
+
+
+def send_message_to_user(target_user, message, peers, gui, my_username):
+    # Static list in GUI, but we still refresh here to avoid stale ports
+    peers[:] = request_peer_list()
+
+    info = find_peer_info(peers, target_user)
+    if info is None:
+        gui.show_message("[ERROR] User not found.")
+        return
+
+    ip, tcp, udp = info
+    ok = network.send_tcp_message(ip, tcp, my_username, message)
+    if ok:
+        gui.show_message(f"You → {target_user}: {message}")
+
+
 def send_file_to_user(target_user, filepath, peers, gui):
+    peers[:] = request_peer_list()
 
-    new_peers = request_peer_list()
-    peers.clear()
-    peers.extend(new_peers)
+    info = find_peer_info(peers, target_user)
+    if info is None:
+        gui.show_message("[ERROR] User not found (UDP).")
+        return
 
-    filename = os.path.basename(filepath)
-
-    for p in peers:
-        if p.strip() == "":
-            continue
-
-        user, ip, tcp, udp = p.split(",")
-        if user == target_user:
-
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            gui.show_message(f"[UDP] Sending '{filename}'...")
-
-            sock.sendto(f"FILENAME:{filename}".encode(), (ip, int(udp)))
-
-            seq = 0
-            with open(filepath, "rb") as f:
-                while True:
-                    chunk = f.read(4096)
-                    if not chunk:
-                        break
-
-                    packet = seq.to_bytes(4, "big") + chunk
-                    sock.sendto(packet, (ip, int(udp)))
-                    seq += 1
-
-            time.sleep(0.01)
-            sock.sendto(b"EOF", (ip, int(udp)))
-            sock.close()
-
-            gui.show_message("[UDP] File sent successfully.")
-            return True
-
-    gui.show_message("[ERROR] User not found (UDP).")
-    return False
+    ip, tcp, udp = info
+    network.send_udp_file(ip, udp, filepath, on_status=gui.show_message)
 
 
-# ====================================
-#               MAIN
-# ====================================
 if __name__ == "__main__":
-    register()
+    if len(sys.argv) != 4:
+        print("Usage: python client.py <username> <tcp_port> <udp_port>")
+        sys.exit(1)
+
+    USERNAME = sys.argv[1]
+    TCP_PORT = sys.argv[2]
+    UDP_PORT = sys.argv[3]
+
+    register(USERNAME, TCP_PORT, UDP_PORT)
     peers = request_peer_list()
 
+    peer_names = get_peer_usernames(peers, USERNAME)
+
     gui = ChatGUI(
-        lambda msg: send_message_to_user("user2", msg, peers, gui),      # FIXED
-        lambda filepath: send_file_to_user("user2", filepath, peers, gui)  # FIXED
+        USERNAME,
+        peer_names,  # STATIC dropdown list
+        lambda target, msg: send_message_to_user(target, msg, peers, gui, USERNAME),
+        lambda target, path: send_file_to_user(target, path, peers, gui)
     )
 
-    tcp_thread = TCPListener(TCP_PORT, gui)
-    tcp_thread.daemon = True
+    tcp_thread = threading_utils.TCPListenerThread(TCP_PORT, gui)
+    udp_thread = threading_utils.UDPListenerThread(UDP_PORT, gui)
     tcp_thread.start()
-
-    udp_thread = UDPListener(UDP_PORT, gui)
-    udp_thread.daemon = True
     udp_thread.start()
 
-    gui.show_message("Welcome! You are user1.")
-    gui.show_message("Send message or click 'Send File'.")
-
+    gui.show_message(f"Welcome! You are {USERNAME}.")
+    if not peer_names:
+        gui.show_message("No peers online yet. Restart client after others join.")
     gui.run()
