@@ -77,7 +77,12 @@ def send_file_to_user(target_user, filepath, peers, gui):
         return
 
     ip, tcp, udp = info
-    network.send_udp_file(ip, udp, filepath, on_status=gui.show_message)
+
+    ok = network.send_udp_file(ip, udp, filepath, on_status=gui.show_message)
+
+    if ok:
+        gui.show_message(f"[UDP] You sent a file to {target_user}.")
+        gui.add_clickable_file(filepath)
 
 
 if __name__ == "__main__":

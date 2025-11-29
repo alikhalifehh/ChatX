@@ -2,7 +2,39 @@ import tkinter as tk
 from tkinter import scrolledtext, filedialog
 import os
 import webbrowser
+from datetime import datetime
 
+class Tooltip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+
+    def show(self, x, y):
+        if self.tip_window:
+            return
+
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x+20}+{y+20}")
+
+        label = tk.Label(
+            tw,
+            text=self.text,
+            background="#ffffe0",
+            relief="solid",
+            borderwidth=1,
+            padx=4,
+            pady=2,
+            font=("Segoe UI", 9)
+        )
+        label.pack()
+
+    def hide(self):
+        tw = self.tip_window
+        if tw:
+            tw.destroy()
+        self.tip_window = None
 
 class ChatGUI:
     def __init__(self, my_username, peer_usernames, send_message_callback, send_file_callback):
@@ -60,8 +92,11 @@ class ChatGUI:
     # ---------------------- PUBLIC METHODS ----------------------
 
     def show_message(self, text: str):
+        timestamp = datetime.now().strftime("%H:%M")
+        line = f"[{timestamp}] {text}"
+
         self.messages.config(state="normal")
-        self.messages.insert(tk.END, text + "\n")
+        self.messages.insert(tk.END, line + "\n")
         self.messages.see(tk.END)
         self.messages.config(state="disabled")
 
@@ -70,14 +105,36 @@ class ChatGUI:
 
     # ---------------------- CLICKABLE FILE SUPPORT ----------------------
 
-    def add_clickable_file(self, filename):
+    def add_clickable_file(self, filepath):
+        filename = os.path.basename(filepath)
+
         self.messages.config(state="normal")
 
-        tagname = f"file_{filename}"
+        safe_id = abs(hash(filepath))
+        tagname = f"file_{safe_id}"
+
         self.messages.insert(tk.END, f"[FILE] {filename}\n", tagname)
 
         self.messages.tag_config(tagname, foreground="blue", underline=1)
-        self.messages.tag_bind(tagname, "<Button-1>", lambda e, fn=filename: self.open_file(fn))
+
+        # TOOLTIP INSTANCE
+        tooltip = Tooltip(self.messages, "Click to open this file")
+
+        # Hover bindings
+        self.messages.tag_bind(
+            tagname, "<Enter>",
+            lambda e: tooltip.show(e.x_root, e.y_root)
+        )
+        self.messages.tag_bind(
+            tagname, "<Leave>",
+            lambda e: tooltip.hide()
+        )
+
+        # Click binding
+        self.messages.tag_bind(
+            tagname, "<Button-1>",
+            lambda e, fn=filepath: self.open_file(fn)
+        )
 
         self.messages.config(state="disabled")
         self.messages.see(tk.END)
