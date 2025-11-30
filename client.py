@@ -3,6 +3,7 @@ import socket
 import network
 import threading_utils
 from gui import ChatGUI
+from logger import log    # <-- NEW
 
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 5000
@@ -20,6 +21,9 @@ def register(username, tcp_port, udp_port):
     s.send(msg.encode())
     reply = s.recv(1024).decode()
     print("[SERVER REPLY]", reply)
+
+    log(f"REGISTERED User={username} TCP={tcp_port} UDP={udp_port}")
+
     s.close()
 
 
@@ -28,6 +32,8 @@ def request_peer_list():
     s.send("REQUEST_LIST".encode())
     data = s.recv(4096).decode()
     s.close()
+
+    log("Requested peer list from server")
 
     peers = []
     for p in data.split("|"):
@@ -54,18 +60,21 @@ def find_peer_info(peers, username):
 
 
 def send_message_to_user(target_user, message, peers, gui, my_username):
-    # Static list in GUI, but we still refresh here to avoid stale ports
     peers[:] = request_peer_list()
 
     info = find_peer_info(peers, target_user)
     if info is None:
         gui.show_message("[ERROR] User not found.")
+        log(f"[ERROR] Tried to send message to NON-EXISTING user '{target_user}'")
         return
 
     ip, tcp, udp = info
     ok = network.send_tcp_message(ip, tcp, my_username, message)
     if ok:
         gui.show_message(f"You → {target_user}: {message}")
+
+        # LOG
+        log(f"GUI SENT MESSAGE → {target_user}: '{message}'")
 
 
 def send_file_to_user(target_user, filepath, peers, gui):
@@ -74,6 +83,7 @@ def send_file_to_user(target_user, filepath, peers, gui):
     info = find_peer_info(peers, target_user)
     if info is None:
         gui.show_message("[ERROR] User not found (UDP).")
+        log(f"[ERROR] Tried to send file to NON-EXISTING user '{target_user}'")
         return
 
     ip, tcp, udp = info
@@ -83,6 +93,9 @@ def send_file_to_user(target_user, filepath, peers, gui):
     if ok:
         gui.show_message(f"[UDP] You sent a file to {target_user}.")
         gui.add_clickable_file(filepath)
+
+        # LOG
+        log(f"GUI SENT FILE → {target_user}: '{filepath}'")
 
 
 if __name__ == "__main__":
@@ -94,6 +107,8 @@ if __name__ == "__main__":
     TCP_PORT = sys.argv[2]
     UDP_PORT = sys.argv[3]
 
+    log("=== CLIENT STARTED ===")
+
     register(USERNAME, TCP_PORT, UDP_PORT)
     peers = request_peer_list()
 
@@ -101,7 +116,7 @@ if __name__ == "__main__":
 
     gui = ChatGUI(
         USERNAME,
-        peer_names,  # STATIC dropdown list
+        peer_names,
         lambda target, msg: send_message_to_user(target, msg, peers, gui, USERNAME),
         lambda target, path: send_file_to_user(target, path, peers, gui)
     )
@@ -111,7 +126,12 @@ if __name__ == "__main__":
     tcp_thread.start()
     udp_thread.start()
 
+    log("TCP and UDP listener threads started")
+
     gui.show_message(f"Welcome! You are {USERNAME}.")
     if not peer_names:
         gui.show_message("No peers online yet. Restart client after others join.")
+
     gui.run()
+
+    log("GUI closed — client shutting down")
